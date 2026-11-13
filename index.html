@@ -32,12 +32,12 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 </head>
 <body>
 <div id="app">
- <div id="top"><div class="brand">🌳 열매가 주렁주렁! 과일나무 대작전</div><div id="timer">60초</div></div>
+ <div id="top"><div class="brand">🌳 열매가 주렁주렁! 과일나무 대작전</div><div id="timer">시간 제한 없음</div></div>
  <div id="stage">
   <canvas id="game" width="1000" height="600"></canvas>
   <div id="overlay"><div class="panel">
    <h1>과일나무 대작전!</h1>
-   <p>나무에서 떨어지는 과일을 받아 보세요.<br>폭탄을 받으면 하트가 하나 줄어요!<br><b>1P와 2P가 함께 도전해요.</b></p>
+   <p>나무에서 떨어지는 과일을 받아 보세요.<br>폭탄을 받으면 하트가 하나 줄어요!<br><b>1P와 2P가 함께 도전해요.</b><br>하트가 없어지면 그 자리에서 친구를 기다려요.<br>둘 다 하트가 없어지면 게임이 끝나요. 시간 제한은 없어요!</p>
    <p>1P: A / D 또는 왼쪽 조작 버튼<br>2P: ← / → 또는 오른쪽 조작 버튼</p>
    <button class="mainbtn" id="start">게임 시작!</button>
   </div></div>
@@ -65,6 +65,42 @@ const fruitTypes=[
  {key:'orange',value:3,label:'귤',color:'#ff9d27'},
  {key:'peach',value:4,label:'복숭아',color:'#f28ab5'}
 ];
+
+// Original drawing data is unchanged. Audio is synthesized locally.
+let audioCtx=null, musicTimer=null, musicStep=0;
+const melody=[72,76,79,76,74,77,81,77,76,79,84,79,74,77,79,71];
+function initAudio(){
+ try{
+  if(!audioCtx){const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;audioCtx=new AC();}
+  if(audioCtx.state==='suspended')audioCtx.resume().catch(()=>{});
+ }catch(e){}
+}
+function tone(freq,duration,volume,type='sine',delay=0,endFreq=null){
+ if(!audioCtx||audioCtx.state!=='running')return;
+ const t=audioCtx.currentTime+delay;
+ const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+ osc.type=type;osc.frequency.setValueAtTime(freq,t);
+ if(endFreq)osc.frequency.exponentialRampToValueAtTime(endFreq,t+duration);
+ gain.gain.setValueAtTime(0,t);gain.gain.linearRampToValueAtTime(volume,t+.012);
+ gain.gain.exponentialRampToValueAtTime(.0001,t+duration);
+ osc.connect(gain);gain.connect(audioCtx.destination);
+ osc.start(t);osc.stop(t+duration+.02);
+ osc.onended=()=>{osc.disconnect();gain.disconnect();};
+}
+function playFruit(){tone(660,.14,.12,'sine');tone(990,.22,.1,'sine',.09);}
+function playBomb(){tone(150,.32,.14,'triangle',0,40);tone(75,.22,.08,'sine',.04,30);}
+function stopBGM(){if(musicTimer!==null)clearInterval(musicTimer);musicTimer=null;}
+function startBGM(){
+ stopBGM();initAudio();musicStep=0;
+ musicTimer=setInterval(()=>{
+  if(!running||document.hidden)return;
+  const n=melody[musicStep%melody.length];
+  tone(440*Math.pow(2,(n-69)/12),.23,.035,'sine');
+  if(musicStep%2===0)tone(musicStep%8<4?130.81:174.61,.35,.025,'triangle');
+  musicStep++;
+ },280);
+}
+
 function rounded(x,y,w,h,r,fill,stroke){ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=4;ctx.stroke();}}
 function drawBackground(){
  const sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,'#8bdcff');sky.addColorStop(1,'#e4f9ff');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
@@ -116,14 +152,14 @@ function spawnItem(){
 function burst(x,y,color){for(let i=0;i<10;i++)particles.push({x,y,vx:(Math.random()-.5)*180,vy:(Math.random()-.8)*170,life:.6,color});}
 function update(dt){
  elapsed+=dt;spawn+=dt; if(spawn>.82){spawn=0;spawnItem();}
- players.forEach(p=>{if(keys[p.left])p.x-=340*dt;if(keys[p.right])p.x+=340*dt;p.x=Math.max(p===players[0]?65:535,Math.min(p===players[0]?465:935,p.x));if(p.inv>0)p.inv-=dt;});
+ players.forEach(p=>{if(p.hearts<=0){p.inv=0;return;}if(keys[p.left])p.x-=340*dt;if(keys[p.right])p.x+=340*dt;p.x=Math.max(p===players[0]?65:535,Math.min(p===players[0]?465:935,p.x));if(p.inv>0)p.inv-=dt;});
  items.forEach(it=>{it.y+=it.vy*dt;it.x+=it.vx*dt;it.rot+=dt*2;});
  for(let i=items.length-1;i>=0;i--){let it=items[i];let caught=false;
-  for(const p of players){if(Math.abs(it.x-p.x)<(p.w*.43+it.size*.30)&&Math.abs(it.y-(p.y-8))<65){caught=true;if(it.key==='bomb'){if(p.inv<=0){p.hearts=Math.max(0,p.hearts-1);p.inv=1.1;burst(it.x,it.y,'#e94a3e');}}else{p.score+=it.value;burst(it.x,it.y,'#ffdf62');}break;}}
+  for(const p of players){if(p.hearts<=0)continue;if(Math.abs(it.x-p.x)<(p.w*.43+it.size*.30)&&Math.abs(it.y-(p.y-8))<65){caught=true;if(it.key==='bomb'){playBomb();if(p.inv<=0){p.hearts=Math.max(0,p.hearts-1);p.inv=p.hearts>0?1.1:0;burst(it.x,it.y,'#e94a3e');}}else{p.score+=it.value;playFruit();burst(it.x,it.y,'#ffdf62');}break;}}
   if(caught||it.y>H+70)items.splice(i,1);
  }
  particles.forEach(a=>{a.x+=a.vx*dt;a.y+=a.vy*dt;a.vy+=220*dt;a.life-=dt;});particles=particles.filter(a=>a.life>0);
- if(players.some(p=>p.hearts<=0)||elapsed>=60)finishGame();
+ if(players.every(p=>p.hearts<=0))finishGame();
 }
 function draw(){
  drawBackground();
@@ -134,15 +170,15 @@ function draw(){
  // bottom fruit guide
  rounded(365,548,270,42,16,'#fff9e8','#e8b74c');ctx.font='22px sans-serif';ctx.textAlign='center';ctx.fillStyle='#6b4a2b';ctx.fillText('🍌  🌰  🍊  🍑   💣',500,577);
 }
-function loop(t){if(!running)return;let dt=Math.min((t-last)/1000||0,.04);last=t;update(dt);draw();timerEl.textContent=Math.max(0,Math.ceil(60-elapsed))+'초';if(running)requestAnimationFrame(loop);}
+function loop(t){if(!running)return;let dt=Math.min((t-last)/1000||0,.04);last=t;update(dt);draw();timerEl.textContent='진행 '+Math.floor(elapsed)+'초';if(running)requestAnimationFrame(loop);}
 function finishGame(){
- running=false;
+ running=false;stopBGM();
  const a=players[0],b=players[1];let headline='함께 멋지게 도전했어요!';
  if(a.score>b.score)headline='🏆 1P 승리!';else if(b.score>a.score)headline='🏆 2P 승리!';else headline='🤝 무승부! 정말 잘했어요!';
  overlay.innerHTML=`<div class="panel"><h1>${headline}</h1><p>🔴 1P 점수: ${a.score}점　💙 2P 점수: ${b.score}점</p><p>남은 하트: 1P ${a.hearts}개 / 2P ${b.hearts}개</p><p>다시 도전해 볼까요?</p><button class="mainbtn" id="again">다시 하기!</button></div>`;
  overlay.style.display='flex';document.getElementById('again').onclick=startGame;
 }
-function startGame(){players.forEach((p,i)=>{p.x=i===0?230:770;p.score=0;p.hearts=3;p.inv=0;});items=[];particles=[];elapsed=0;spawn=0;running=true;overlay.style.display='none';timerEl.textContent='60초';last=performance.now();requestAnimationFrame(loop);}
+function startGame(){startBGM();players.forEach((p,i)=>{p.x=i===0?230:770;p.score=0;p.hearts=3;p.inv=0;});items=[];particles=[];elapsed=0;spawn=0;running=true;overlay.style.display='none';timerEl.textContent='진행 0초';last=performance.now();requestAnimationFrame(loop);}
 document.getElementById('start').onclick=startGame;
 window.addEventListener('keydown',e=>{let k=e.key.toLowerCase();if(['arrowleft','arrowright',' '].includes(k))e.preventDefault();keys[k==='arrowleft'?'left':k==='arrowright'?'right':k]=true;});
 window.addEventListener('keyup',e=>{let k=e.key.toLowerCase();keys[k==='arrowleft'?'left':k==='arrowright'?'right':k]=false;});
